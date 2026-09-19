@@ -1,12 +1,17 @@
-```python
 import os
 import json
 import re
+import time
 import urllib.request
 import urllib.parse
+import urllib.error
 import feedparser
 from datetime import datetime, timedelta, timezone
-import resend
+
+try:
+    import resend
+except ImportError:
+    resend = None
 
 
 # ============================================================
@@ -15,8 +20,9 @@ import resend
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 EMAIL_DESTINATAIRE = os.environ.get("EMAIL_DESTINATAIRE")
+NVD_API_KEY = os.environ.get("NVD_API_KEY")
 
-if RESEND_API_KEY:
+if resend and RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
 
@@ -24,176 +30,123 @@ if RESEND_API_KEY:
 # PARAMÈTRES DE VEILLE
 # ============================================================
 
-# Nombre de jours d'historique
 PERIODE_VEILLE_JOURS = 21
 
-# Nombre maximum d'articles récupérés par flux RSS
-MAX_ARTICLES_PAR_SOURCE = 50
+# Articles RSS maximum par source.
+MAX_ARTICLES_PAR_SOURCE = 100
 
-# Nombre maximum de CVE récupérées depuis le NVD
-MAX_CVE = 100
+# Nombre maximum d'éléments conservés dans data.json.
+# Les CVE ne sont plus limitées à 100.
+MAX_ARTICLES_TOTAL = 500
+MAX_CVE_TOTAL = 1000
 
-# Nombre maximum d'articles conservés dans data.json
-MAX_ARTICLES_TOTAL = 300
-
-# API NVD
-NVD_API_URL = (
-    "https://services.nvd.nist.gov/rest/json/cves/2.0"
-)
-
-# Clé API NVD optionnelle
-#
-# Si NVD_API_KEY est configurée dans les variables
-# d'environnement, elle sera automatiquement utilisée.
-NVD_API_KEY = os.environ.get("NVD_API_KEY")
+NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 
 # ============================================================
-# SOURCES DE VEILLE INFORMATIQUE
+# SOURCES DE VEILLE
+# IMPORTANT : Air Digital Vision n'est PAS une source de news.
 # ============================================================
 
 RSS_FEEDS = [
-
-    # --------------------------------------------------------
-    # CYBERSÉCURITÉ
-    # --------------------------------------------------------
-
+    # Cybersécurité
     {
         "source": "CERT-FR / ANSSI",
         "url": "https://www.cert.ssi.gouv.fr/feed/",
-        "categorie": "Cybersécurité"
+        "categorie": "Cybersécurité",
     },
-
     {
         "source": "CERT-FR / Alertes",
         "url": "https://www.cert.ssi.gouv.fr/alerte/feed/",
-        "categorie": "Cybersécurité"
+        "categorie": "Cybersécurité",
     },
-
     {
         "source": "CERT-FR / Avis de sécurité",
         "url": "https://www.cert.ssi.gouv.fr/avis/feed/",
-        "categorie": "Vulnérabilités"
+        "categorie": "Vulnérabilités",
     },
-
     {
         "source": "CERT-FR / Actualités",
         "url": "https://www.cert.ssi.gouv.fr/actualite/feed/",
-        "categorie": "Cybersécurité"
+        "categorie": "Cybersécurité",
     },
-
-
-    # --------------------------------------------------------
-    # NIST
-    # --------------------------------------------------------
-
     {
         "source": "NIST Cybersecurity",
         "url": "https://www.nist.gov/news-events/cybersecurity/rss.xml",
-        "categorie": "Cybersécurité"
+        "categorie": "Cybersécurité",
     },
 
-
-    # --------------------------------------------------------
-    # IA / INTELLIGENCE ARTIFICIELLE
-    # --------------------------------------------------------
-
+    # IA
     {
         "source": "OpenAI",
         "url": "https://openai.com/news/rss.xml",
-        "categorie": "Intelligence artificielle"
+        "categorie": "Intelligence artificielle",
     },
-
     {
         "source": "Google AI",
         "url": "https://blog.google/technology/ai/rss/",
-        "categorie": "Intelligence artificielle"
+        "categorie": "Intelligence artificielle",
     },
-
     {
         "source": "Hugging Face",
         "url": "https://huggingface.co/blog/feed.xml",
-        "categorie": "Intelligence artificielle"
+        "categorie": "Intelligence artificielle",
     },
 
-
-    # --------------------------------------------------------
-    # CLOUD / INFRASTRUCTURE
-    # --------------------------------------------------------
-
+    # Cloud / infrastructure
     {
         "source": "Cloudflare Blog",
         "url": "https://blog.cloudflare.com/rss/",
-        "categorie": "Cloud & Infrastructure"
+        "categorie": "Cloud & Infrastructure",
     },
-
     {
         "source": "Kubernetes Blog",
         "url": "https://kubernetes.io/feed.xml",
-        "categorie": "Cloud & Infrastructure"
+        "categorie": "Cloud & Infrastructure",
     },
-
     {
         "source": "Docker Blog",
         "url": "https://www.docker.com/feed/",
-        "categorie": "Cloud & Infrastructure"
+        "categorie": "Cloud & Infrastructure",
     },
 
-
-    # --------------------------------------------------------
-    # OPEN SOURCE / DÉVELOPPEMENT
-    # --------------------------------------------------------
-
+    # Open source / développement
     {
         "source": "GitHub Blog",
         "url": "https://github.blog/feed/",
-        "categorie": "Open Source & Développement"
+        "categorie": "Open Source & Développement",
     },
-
     {
         "source": "Mozilla Hacks",
         "url": "https://hacks.mozilla.org/feed/",
-        "categorie": "Web & Technologies"
+        "categorie": "Web & Technologies",
     },
 
-
-    # --------------------------------------------------------
-    # DATA
-    # --------------------------------------------------------
-
+    # Data
     {
         "source": "Google Cloud Blog",
         "url": "https://cloud.google.com/feeds/blog.xml",
-        "categorie": "Data"
+        "categorie": "Data",
     },
 
-
-    # --------------------------------------------------------
-    # WEB / TECHNOLOGIES
-    # --------------------------------------------------------
-
+    # Web / technologies
     {
         "source": "Google Developers Blog",
         "url": "https://developers.googleblog.com/feeds/posts/default",
-        "categorie": "Web & Technologies"
+        "categorie": "Web & Technologies",
     },
-
     {
         "source": "DMC Technologies",
         "url": "https://dmc-technologies.fr/feed/",
-        "categorie": "Web & Technologies"
+        "categorie": "Web & Technologies",
     },
 
-
-    # --------------------------------------------------------
-    # TRANSFORMATION NUMÉRIQUE
-    # --------------------------------------------------------
-
+    # Transformation numérique
     {
         "source": "ENISA",
         "url": "https://www.enisa.europa.eu/media/news-items/news-wires/RSS",
-        "categorie": "Transformation numérique"
-    }
+        "categorie": "Transformation numérique",
+    },
 ]
 
 
@@ -201,109 +154,92 @@ RSS_FEEDS = [
 # OUTILS
 # ============================================================
 
-def nettoyer_html(texte):
-    """
-    Supprime les balises HTML et nettoie le texte.
-    """
-
+def nettoyer_html(texte, longueur=350):
     if not texte:
         return "Consulter la source pour plus de détails."
 
-    clean = re.sub(
-        r"<[^>]+>",
-        "",
-        str(texte)
-    )
+    clean = re.sub(r"<[^>]+>", " ", str(texte))
+    clean = re.sub(r"&nbsp;|&amp;|&quot;|&#39;", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
 
-    clean = re.sub(
-        r"&nbsp;|&amp;|&quot;|&#39;",
-        " ",
-        clean
-    )
-
-    clean = " ".join(clean.split())
-
-    if len(clean) > 300:
-        clean = clean[:300] + "..."
+    if len(clean) > longueur:
+        clean = clean[:longueur].rsplit(" ", 1)[0] + "..."
 
     return clean
 
 
 def nettoyer_titre(titre):
-    """
-    Nettoie légèrement le titre.
-    """
-
     if not titre:
         return "Actualité informatique"
-
-    return " ".join(
-        str(titre).split()
-    )
+    return " ".join(str(titre).split())
 
 
-def obtenir_date_entry(entry):
-    """
-    Récupère la date d'une entrée RSS.
-    """
-
-    published = (
+def date_entry_utc(entry):
+    parsed = (
         entry.get("published_parsed")
         or entry.get("updated_parsed")
         or entry.get("created_parsed")
     )
 
-    if published:
-
-        try:
-
-            return datetime(
-                published.tm_year,
-                published.tm_mon,
-                published.tm_mday,
-                published.tm_hour,
-                published.tm_min,
-                published.tm_sec
-            )
-
-        except Exception:
-            pass
-
-    return None
-
-
-def format_date_datetime(date_obj):
-    """
-    Transforme un datetime en DD/MM/YYYY.
-    """
-
-    if date_obj:
-
-        return date_obj.strftime(
-            "%d/%m/%Y"
-        )
-
-    return datetime.now().strftime(
-        "%d/%m/%Y"
-    )
-
-
-def convertir_date(date_string):
-    """
-    Transforme DD/MM/YYYY en datetime
-    pour permettre le tri.
-    """
+    if not parsed:
+        return None
 
     try:
-
-        return datetime.strptime(
-            date_string,
-            "%d/%m/%Y"
+        return datetime(
+            parsed.tm_year,
+            parsed.tm_mon,
+            parsed.tm_mday,
+            parsed.tm_hour,
+            parsed.tm_min,
+            parsed.tm_sec,
+            tzinfo=timezone.utc,
         )
-
     except Exception:
+        return None
 
-        return datetime.min
+
+def format_date(date_obj):
+    if not date_obj:
+        return datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    return date_obj.strftime("%d/%m/%Y")
+
+
+def iso_date(date_obj):
+    if not date_obj:
+        return datetime.now(timezone.utc).isoformat()
+    return date_obj.isoformat()
+
+
+def valeur_cvss(metrics, version):
+    items = metrics.get(version, [])
+    if not items:
+        return None, None
+
+    # On privilégie la métrique primaire si elle existe.
+    metric = next(
+        (m for m in items if m.get("type") == "Primary"),
+        items[0],
+    )
+
+    data = metric.get("cvssData", {})
+    return data.get("baseScore"), data.get("baseSeverity")
+
+
+def extraire_cvss(cve):
+    metrics = cve.get("metrics", {})
+
+    # Priorité aux versions les plus récentes.
+    for key, version in [
+        ("cvssMetricV40", "4.0"),
+        ("cvssMetricV31", "3.1"),
+        ("cvssMetricV30", "3.0"),
+        ("cvssMetricV2", "2.0"),
+    ]:
+        score, severity = valeur_cvss(metrics, key)
+        if score is not None:
+            return score, severity, version
+
+    return None, None, None
 
 
 # ============================================================
@@ -312,1009 +248,413 @@ def convertir_date(date_string):
 
 articles_traites = []
 
-date_limite = (
-    datetime.now()
-    - timedelta(
-        days=PERIODE_VEILLE_JOURS
-    )
-)
-
+date_fin = datetime.now(timezone.utc)
+date_limite = date_fin - timedelta(days=PERIODE_VEILLE_JOURS)
 
 headers = {
-    "User-Agent":
-        "Veille-Informatique/2.0"
+    "User-Agent": (
+        "AirDigitalVision-Veille/3.0 "
+        "(+https://air-digital-vision-xua.caffeine.xyz/)"
+    )
 }
 
-
-print("")
-print("======================================")
+print("\n======================================")
 print("COLLECTE DES FLUX RSS")
 print("======================================")
 
-
 for feed_info in RSS_FEEDS:
-
-    print(
-        f"\nLecture de : "
-        f"{feed_info['source']}"
-    )
+    print(f"\nLecture : {feed_info['source']}")
 
     try:
-
         req = urllib.request.Request(
             feed_info["url"],
-            headers=headers
+            headers=headers,
         )
 
-        with urllib.request.urlopen(
-            req,
-            timeout=20
-        ) as response:
-
+        with urllib.request.urlopen(req, timeout=25) as response:
             xml_data = response.read()
 
-        feed = feedparser.parse(
-            xml_data
-        )
+        feed = feedparser.parse(xml_data)
 
         if feed.bozo:
-
-            print(
-                f"⚠️ Flux potentiellement "
-                f"invalide : "
-                f"{feed_info['source']}"
-            )
+            print(f"⚠️ Flux potentiellement invalide : {feed_info['source']}")
 
         compteur = 0
 
-        for entry in feed.entries[
-            :MAX_ARTICLES_PAR_SOURCE
-        ]:
+        for entry in feed.entries[:MAX_ARTICLES_PAR_SOURCE]:
+            date_entry = date_entry_utc(entry)
 
-            date_entry = obtenir_date_entry(
-                entry
-            )
-
-            # ------------------------------------------------
-            # FILTRE 21 JOURS
-            # ------------------------------------------------
-
-            if (
-                date_entry
-                and date_entry < date_limite
-            ):
-
+            # Si le flux fournit une date, on applique strictement les 21 jours.
+            if date_entry and date_entry < date_limite:
                 continue
 
             titre = nettoyer_titre(
-                entry.get(
-                    "title",
-                    "Actualité informatique"
-                )
+                entry.get("title", "Actualité informatique")
             )
 
-            lien = entry.get(
-                "link",
-                feed_info["url"]
-            )
+            lien = entry.get("link", feed_info["url"])
 
             raw_desc = entry.get(
                 "summary",
-                entry.get(
-                    "description",
-                    ""
-                )
-            )
-
-            date_pub = format_date_datetime(
-                date_entry
+                entry.get("description", ""),
             )
 
             article = {
-
-                "source":
-                    feed_info["source"],
-
-                "titre":
-                    titre,
-
-                "lien":
-                    lien,
-
-                "categorie":
-                    feed_info["categorie"],
-
-                "date":
-                    date_pub,
-
-                "resume":
-                    nettoyer_html(
-                        raw_desc
-                    ),
-
-                "impact_pratique":
-                    (
-                        f"Actualité du "
-                        f"{date_pub} — "
-                        f"Veille "
-                        f"{feed_info['categorie']}."
-                    )
+                "type": "actualite",
+                "source": feed_info["source"],
+                "titre": titre,
+                "lien": lien,
+                "categorie": feed_info["categorie"],
+                "date": format_date(date_entry),
+                "date_iso": iso_date(date_entry),
+                "resume": nettoyer_html(raw_desc),
+                "impact_pratique": (
+                    f"Actualité du {format_date(date_entry)} — "
+                    f"veille {feed_info['categorie']}."
+                ),
             }
 
-            articles_traites.append(
-                article
-            )
-
+            articles_traites.append(article)
             compteur += 1
 
-        print(
-            f"✓ {compteur} article(s) "
-            f"récupéré(s)"
-        )
+        print(f"✓ {compteur} actualité(s) récupérée(s)")
 
     except Exception as e:
-
-        print(
-            f"❌ Erreur avec "
-            f"{feed_info['source']} : "
-            f"{e}"
-        )
+        print(f"❌ Erreur avec {feed_info['source']} : {e}")
 
 
 # ============================================================
 # COLLECTE CVE / NVD
+# Pagination complète sur les résultats récents
 # ============================================================
 
 def collecter_cve_nvd():
-
-    print("")
-    print("======================================")
+    print("\n======================================")
     print("COLLECTE DES CVE / NVD")
     print("======================================")
 
-    try:
+    maintenant = datetime.now(timezone.utc)
+    debut = maintenant - timedelta(days=PERIODE_VEILLE_JOURS)
 
-        maintenant = datetime.now(
-            timezone.utc
-        )
+    start_index = 0
+    results_per_page = 2000
+    total_cves = 0
+    toutes_les_cves = []
 
-        debut = (
-            maintenant
-            - timedelta(
-                days=PERIODE_VEILLE_JOURS
-            )
-        )
+    cve_headers = {
+        "User-Agent": "AirDigitalVision-Veille/3.0",
+    }
 
+    if NVD_API_KEY:
+        cve_headers["apiKey"] = NVD_API_KEY
+
+    while total_cves < MAX_CVE_TOTAL:
         params = {
-
-            "pubStartDate":
-                debut.strftime(
-                    "%Y-%m-%dT%H:%M:%S.000"
-                ),
-
-            "pubEndDate":
-                maintenant.strftime(
-                    "%Y-%m-%dT%H:%M:%S.000"
-                ),
-
-            "resultsPerPage":
-                MAX_CVE
+            "pubStartDate": debut.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "pubEndDate": maintenant.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "startIndex": start_index,
+            "resultsPerPage": results_per_page,
         }
 
-        url = (
-            NVD_API_URL
-            + "?"
-            + urllib.parse.urlencode(
-                params
-            )
-        )
+        url = NVD_API_URL + "?" + urllib.parse.urlencode(params)
 
-        cve_headers = {
+        data = None
 
-            "User-Agent":
-                "Veille-Informatique/2.0"
-        }
-
-        if NVD_API_KEY:
-
-            cve_headers[
-                "apiKey"
-            ] = NVD_API_KEY
-
-        req = urllib.request.Request(
-            url,
-            headers=cve_headers
-        )
-
-        with urllib.request.urlopen(
-            req,
-            timeout=30
-        ) as response:
-
-            data = json.loads(
-                response.read().decode(
-                    "utf-8"
+        for tentative in range(4):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers=cve_headers,
                 )
-            )
 
-        vulnerabilities = data.get(
-            "vulnerabilities",
-            []
-        )
-
-        print(
-            f"✓ {len(vulnerabilities)} "
-            f"CVE reçues du NVD"
-        )
-
-        compteur = 0
-
-        for item in vulnerabilities:
-
-            cve = item.get(
-                "cve",
-                {}
-            )
-
-            cve_id = cve.get(
-                "id",
-                ""
-            )
-
-            if not cve_id.startswith(
-                "CVE-"
-            ):
-
-                continue
-
-            # ------------------------------------------------
-            # DESCRIPTION
-            # ------------------------------------------------
-
-            descriptions = cve.get(
-                "descriptions",
-                []
-            )
-
-            description = ""
-
-            # Priorité à l'anglais
-            for desc in descriptions:
-
-                if (
-                    desc.get("lang")
-                    == "en"
-                ):
-
-                    description = desc.get(
-                        "value",
-                        ""
+                with urllib.request.urlopen(req, timeout=60) as response:
+                    data = json.loads(
+                        response.read().decode("utf-8")
                     )
 
+                break
+
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    attente = 6 * (tentative + 1)
+                    print(
+                        f"⚠️ NVD limite de requêtes (429). "
+                        f"Nouvelle tentative dans {attente}s..."
+                    )
+                    time.sleep(attente)
+                else:
+                    print(f"❌ NVD HTTP {e.code}")
                     break
 
-            if (
-                not description
-                and descriptions
-            ):
+            except Exception as e:
+                print(f"⚠️ NVD tentative {tentative + 1}/4 : {e}")
+                time.sleep(3 * (tentative + 1))
 
-                description = (
-                    descriptions[0]
-                    .get(
-                        "value",
-                        ""
-                    )
-                )
+        if data is None:
+            break
 
-            # ------------------------------------------------
-            # DATE
-            # ------------------------------------------------
+        vulnerabilities = data.get("vulnerabilities", [])
+        total_results = data.get("totalResults", 0)
 
-            published = cve.get(
-                "published"
-            )
+        if not vulnerabilities:
+            break
 
-            date_cve = datetime.now()
-
-            if published:
-
-                try:
-
-                    date_cve = (
-                        datetime.fromisoformat(
-                            published.replace(
-                                "Z",
-                                "+00:00"
-                            )
-                        )
-                        .replace(
-                            tzinfo=None
-                        )
-                    )
-
-                except Exception:
-                    pass
-
-            # ------------------------------------------------
-            # CVSS
-            # ------------------------------------------------
-
-            score = None
-            severity = None
-            version_cvss = None
-
-            metrics = cve.get(
-                "metrics",
-                {}
-            )
-
-            # ------------------------------------------------
-            # CVSS V4
-            # ------------------------------------------------
-
-            if metrics.get(
-                "cvssMetricV40"
-            ):
-
-                metric = metrics[
-                    "cvssMetricV40"
-                ][0]
-
-                cvss_data = metric.get(
-                    "cvssData",
-                    {}
-                )
-
-                score = cvss_data.get(
-                    "baseScore"
-                )
-
-                severity = cvss_data.get(
-                    "baseSeverity"
-                )
-
-                version_cvss = "4.0"
-
-            # ------------------------------------------------
-            # CVSS V3.1
-            # ------------------------------------------------
-
-            elif metrics.get(
-                "cvssMetricV31"
-            ):
-
-                metric = metrics[
-                    "cvssMetricV31"
-                ][0]
-
-                cvss_data = metric.get(
-                    "cvssData",
-                    {}
-                )
-
-                score = cvss_data.get(
-                    "baseScore"
-                )
-
-                severity = cvss_data.get(
-                    "baseSeverity"
-                )
-
-                version_cvss = "3.1"
-
-            # ------------------------------------------------
-            # CVSS V3.0
-            # ------------------------------------------------
-
-            elif metrics.get(
-                "cvssMetricV30"
-            ):
-
-                metric = metrics[
-                    "cvssMetricV30"
-                ][0]
-
-                cvss_data = metric.get(
-                    "cvssData",
-                    {}
-                )
-
-                score = cvss_data.get(
-                    "baseScore"
-                )
-
-                severity = cvss_data.get(
-                    "baseSeverity"
-                )
-
-                version_cvss = "3.0"
-
-            # ------------------------------------------------
-            # RÉSUMÉ
-            # ------------------------------------------------
-
-            resume = nettoyer_html(
-                description
-            )
-
-            # ------------------------------------------------
-            # IMPACT
-            # ------------------------------------------------
-
-            if score is not None:
-
-                impact = (
-                    f"CVE {cve_id} — "
-                    f"CVSS {score}"
-                )
-
-                if version_cvss:
-
-                    impact += (
-                        f" — CVSS "
-                        f"{version_cvss}"
-                    )
-
-                if severity:
-
-                    impact += (
-                        f" — {severity}"
-                    )
-
-            else:
-
-                impact = (
-                    f"CVE {cve_id} "
-                    f"publiée récemment."
-                )
-
-            # ------------------------------------------------
-            # ARTICLE
-            # ------------------------------------------------
-
-            article = {
-
-                "source":
-                    "NVD / NIST",
-
-                "titre":
-                    (
-                        f"{cve_id} — "
-                        f"Vulnérabilité "
-                        f"de sécurité"
-                    ),
-
-                "lien":
-                    (
-                        "https://nvd.nist.gov/"
-                        f"vuln/detail/{cve_id}"
-                    ),
-
-                "categorie":
-                    "Vulnérabilités",
-
-                "date":
-                    date_cve.strftime(
-                        "%d/%m/%Y"
-                    ),
-
-                "resume":
-                    resume,
-
-                "impact_pratique":
-                    impact,
-
-                "cve":
-                    cve_id,
-
-                "cvss":
-                    score,
-
-                "severity":
-                    severity,
-
-                "cvss_version":
-                    version_cvss
-            }
-
-            articles_traites.append(
-                article
-            )
-
-            compteur += 1
+        toutes_les_cves.extend(vulnerabilities)
+        total_cves += len(vulnerabilities)
 
         print(
-            f"✓ {compteur} CVE "
-            f"ajoutées à la veille"
+            f"✓ NVD : {total_cves}/{total_results} "
+            f"CVE récupérées"
         )
 
-    except Exception as e:
+        start_index += len(vulnerabilities)
 
-        print(
-            f"❌ Erreur NVD/CVE : "
-            f"{e}"
-        )
+        if start_index >= total_results:
+            break
+
+        if total_cves >= MAX_CVE_TOTAL:
+            break
+
+        # Sans clé API, on espace les appels pour respecter les limites NVD.
+        if not NVD_API_KEY:
+            time.sleep(6)
+
+    compteur = 0
+
+    for item in toutes_les_cves[:MAX_CVE_TOTAL]:
+        cve = item.get("cve", {})
+        cve_id = cve.get("id", "")
+
+        if not cve_id.startswith("CVE-"):
+            continue
+
+        descriptions = cve.get("descriptions", [])
+        description = ""
+
+        for desc in descriptions:
+            if desc.get("lang") == "en":
+                description = desc.get("value", "")
+                break
+
+        if not description and descriptions:
+            description = descriptions[0].get("value", "")
+
+        published = cve.get("published")
+        date_cve = maintenant
+
+        if published:
+            try:
+                date_cve = datetime.fromisoformat(
+                    published.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+            except Exception:
+                pass
+
+        score, severity, version_cvss = extraire_cvss(cve)
+
+        impact = f"CVE {cve_id} publiée récemment."
+
+        if score is not None:
+            impact = f"CVE {cve_id} — CVSS {score}"
+            if version_cvss:
+                impact += f" — CVSS {version_cvss}"
+            if severity:
+                impact += f" — {severity}"
+
+        article = {
+            "type": "cve",
+            "source": "NVD / NIST",
+            "titre": f"{cve_id} — Vulnérabilité de sécurité",
+            "lien": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+            "categorie": "Vulnérabilités",
+            "date": format_date(date_cve),
+            "date_iso": iso_date(date_cve),
+            "resume": nettoyer_html(description, 500),
+            "impact_pratique": impact,
+            "cve": cve_id,
+            "cvss": score,
+            "severity": severity,
+            "cvss_version": version_cvss,
+        }
+
+        articles_traites.append(article)
+        compteur += 1
+
+    print(f"✓ {compteur} CVE ajoutées à la veille")
 
 
 collecter_cve_nvd()
 
 
 # ============================================================
-# SUPPRESSION DES DOUBLONS
+# DOUBLONS
 # ============================================================
-
-print("")
-print("======================================")
-print("SUPPRESSION DES DOUBLONS")
-print("======================================")
-
 
 articles_uniques = {}
 
-
 for article in articles_traites:
-
-    # Pour les CVE, l'identifiant CVE
-    # est utilisé comme clé principale.
     if article.get("cve"):
-
-        cle = (
-            "cve|"
-            + article["cve"].lower()
-        )
-
+        cle = "cve|" + article["cve"].lower()
     else:
-
         cle = (
-            article["titre"]
-            .strip()
-            .lower()
+            article.get("titre", "").strip().lower()
             + "|"
-            + article["source"]
-            .strip()
-            .lower()
+            + article.get("source", "").strip().lower()
         )
 
-    if cle not in articles_uniques:
+    # En cas de doublon, on garde le premier élément.
+    articles_uniques.setdefault(cle, article)
 
-        articles_uniques[
-            cle
-        ] = article
-
-
-articles_traites = list(
-    articles_uniques.values()
-)
-
-
-print(
-    f"✓ {len(articles_traites)} "
-    f"articles uniques"
-)
+articles_traites = list(articles_uniques.values())
 
 
 # ============================================================
-# TRI PAR DATE
+# TRI
 # ============================================================
 
 articles_traites.sort(
-    key=lambda x:
-        convertir_date(
-            x["date"]
-        ),
-    reverse=True
+    key=lambda x: x.get("date_iso", ""),
+    reverse=True,
 )
 
-
-# ============================================================
-# LIMITATION
-# ============================================================
-
-articles_traites = articles_traites[
-    :MAX_ARTICLES_TOTAL
-]
+# On conserve les actualités et CVE récentes ensemble.
+articles_traites = articles_traites[:MAX_ARTICLES_TOTAL]
 
 
 # ============================================================
 # STATISTIQUES
 # ============================================================
 
-print("")
-print("======================================")
+nb_cve = sum(1 for x in articles_traites if x.get("cve"))
+nb_actualites = sum(1 for x in articles_traites if not x.get("cve"))
+
+print("\n======================================")
 print("VEILLE INFORMATIQUE")
 print("======================================")
-
-
-print(
-    f"Total : "
-    f"{len(articles_traites)}"
-)
-
-
-categories = {}
-
-
-for article in articles_traites:
-
-    categorie = article[
-        "categorie"
-    ]
-
-    categories[categorie] = (
-        categories.get(
-            categorie,
-            0
-        ) + 1
-    )
-
-
-for categorie, nombre in categories.items():
-
-    print(
-        f"  - {categorie} : "
-        f"{nombre}"
-    )
+print(f"Actualités : {nb_actualites}")
+print(f"CVE        : {nb_cve}")
+print(f"Total      : {len(articles_traites)}")
+print(f"Période    : {PERIODE_VEILLE_JOURS} jours")
 
 
 # ============================================================
-# ENREGISTREMENT DATA.JSON
+# DATA.JSON
 # ============================================================
 
-with open(
-    "data.json",
-    "w",
-    encoding="utf-8"
-) as f:
-
+with open("data.json", "w", encoding="utf-8") as f:
     json.dump(
         articles_traites,
         f,
         ensure_ascii=False,
-        indent=2
+        indent=2,
     )
 
-
-print("")
-print(
-    "✓ data.json généré avec succès."
-)
+print("✓ data.json généré avec succès.")
 
 
 # ============================================================
 # EMAIL
 # ============================================================
 
-date_jour = datetime.now().strftime(
-    "%d/%m/%Y"
-)
-
-
 if (
     articles_traites
+    and resend
     and RESEND_API_KEY
     and EMAIL_DESTINATAIRE
 ):
+    date_jour = datetime.now().strftime("%d/%m/%Y")
 
     html_email = f"""
-
-    <div style="
-        font-family: Arial, Helvetica, sans-serif;
-        max-width: 700px;
-        margin: auto;
-        color: #0f172a;
-    ">
-
-        <div style="
-            background:#0f172a;
-            color:white;
-            padding:25px;
-            border-radius:10px;
-        ">
-
-            <div style="
-                color:#60a5fa;
-                font-size:12px;
-                text-transform:uppercase;
-                letter-spacing:1px;
-            ">
+    <div style="font-family:Arial,sans-serif;max-width:700px;margin:auto;color:#0f172a">
+        <div style="background:#0f172a;color:white;padding:25px;border-radius:10px">
+            <div style="color:#60a5fa;font-size:12px;text-transform:uppercase">
                 Air Digital Vision
             </div>
-
-            <h1 style="
-                margin:8px 0;
-                font-size:25px;
-            ">
-                Veille Informatique & Numérique
-            </h1>
-
-            <p style="
-                color:#cbd5e1;
-                font-size:13px;
-                margin:0;
-            ">
-                IA · Cybersécurité · CVE · Cloud ·
-                Data · Open Source · Web · Technologies
+            <h1>Veille Informatique & Numérique</h1>
+            <p style="color:#cbd5e1">
+                IA · Cybersécurité · CVE · Cloud · Data · Open Source · Web
             </p>
-
         </div>
 
-        <div style="
-            padding:15px 0;
-            color:#64748b;
-            font-size:13px;
-        ">
-
-            Édition du
-
-            <strong>
-                {date_jour}
-            </strong>
-
-            ·
-
-            <strong>
-                {len(articles_traites)}
-            </strong>
-
-            actualités
-
-            ·
-
-            <strong>
-                {PERIODE_VEILLE_JOURS}
-            </strong>
-
-            jours d'historique
-
-        </div>
-
+        <p style="color:#64748b;font-size:13px">
+            Édition du <strong>{date_jour}</strong> ·
+            <strong>{nb_actualites}</strong> actualités ·
+            <strong>{nb_cve}</strong> CVE ·
+            {PERIODE_VEILLE_JOURS} jours d'historique
+        </p>
     """
 
-    for art in articles_traites:
-
-        # ----------------------------------------------------
-        # Informations CVE
-        # ----------------------------------------------------
-
-        cve_badge = ""
+    for art in articles_traites[:100]:
+        badge = ""
 
         if art.get("cve"):
-
-            severity = (
-                art.get("severity")
-                or ""
-            )
-
-            score = art.get(
-                "cvss"
-            )
-
-            cvss_text = ""
-
-            if score is not None:
-
-                cvss_text = (
-                    f" · CVSS {score}"
-                )
-
-            cve_badge = f"""
-
-            <div style="
-                margin-top:8px;
-                padding:7px 9px;
-                background:#fff7ed;
-                border-left:3px solid #f97316;
-                font-size:12px;
-                color:#9a3412;
-            ">
-
-                <strong>
-                    {art.get("cve")}
-                </strong>
-
-                {cvss_text}
-
-                {f" · {severity}" if severity else ""}
-
+            badge = f"""
+            <div style="margin-top:8px;padding:7px 9px;
+                        background:#fff7ed;border-left:3px solid #f97316;
+                        font-size:12px;color:#9a3412">
+                <strong>{art["cve"]}</strong>
+                {" · CVSS " + str(art["cvss"]) if art.get("cvss") is not None else ""}
+                {" · " + str(art["severity"]) if art.get("severity") else ""}
             </div>
-
             """
 
         html_email += f"""
-
-        <div style="
-            margin-bottom:15px;
-            padding:16px;
-            background:#f8fafc;
-            border:1px solid #e2e8f0;
-            border-left:4px solid #2563eb;
-            border-radius:6px;
-        ">
-
-            <div style="
-                color:#64748b;
-                font-size:11px;
-                margin-bottom:6px;
-            ">
-
-                {art['date']}
-
-                ·
-
-                <strong>
-                    {art['categorie']}
-                </strong>
-
-                ·
-
-                {art['source']}
-
+        <div style="margin-bottom:15px;padding:16px;background:#f8fafc;
+                    border:1px solid #e2e8f0;border-radius:6px">
+            <div style="color:#64748b;font-size:11px">
+                {art["date"]} · {art["categorie"]} · {art["source"]}
             </div>
 
-            <h2 style="
-                font-size:17px;
-                margin:5px 0 8px;
-            ">
+            {badge}
 
-                <a
-                    href="{art['lien']}"
-                    style="
-                        color:#0f172a;
-                        text-decoration:none;
-                    "
-                >
-
-                    {art['titre']}
-
+            <h2 style="font-size:17px">
+                <a href="{art["lien"]}" style="color:#0f172a;text-decoration:none">
+                    {art["titre"]}
                 </a>
-
             </h2>
 
-            {cve_badge}
-
-            <p style="
-                color:#475569;
-                font-size:13px;
-                line-height:1.5;
-            ">
-
-                {art['resume']}
-
+            <p style="color:#475569;font-size:13px;line-height:1.5">
+                {art["resume"]}
             </p>
 
-            <div style="
-                background:#ffffff;
-                border-left:3px solid #2563eb;
-                padding:9px;
-                font-size:12px;
-                color:#475569;
-            ">
-
-                <strong>
-                    À retenir :
-                </strong>
-
-                {art['impact_pratique']}
-
+            <div style="background:white;border-left:3px solid #2563eb;
+                        padding:9px;font-size:12px;color:#475569">
+                <strong>À retenir :</strong> {art["impact_pratique"]}
             </div>
-
-            <p style="
-                margin-top:12px;
-            ">
-
-                <a
-                    href="{art['lien']}"
-                    style="
-                        color:#2563eb;
-                        font-size:12px;
-                        font-weight:bold;
-                    "
-                >
-
-                    Consulter la source →
-
-                </a>
-
-            </p>
-
         </div>
-
         """
 
     html_email += """
-
-        <div style="
-            margin-top:20px;
-            padding-top:15px;
-            border-top:1px solid #e2e8f0;
-            color:#64748b;
-            font-size:11px;
-            text-align:center;
-        ">
-
-            Veille automatisée par
-
-            <strong>
-                Air Digital Vision
-            </strong>
-
-            <br>
-
-            Période analysée :
-            21 derniers jours
-
-            <br>
-
-            Les informations proviennent
-            des sources originales.
-
-            <br>
-
-            Consultez toujours la source originale
-            pour obtenir l'information complète.
-
+        <div style="border-top:1px solid #e2e8f0;padding-top:15px;
+                    color:#64748b;font-size:11px;text-align:center">
+            Veille automatisée par <strong>Air Digital Vision</strong><br>
+            Les informations proviennent des sources originales.
         </div>
-
     </div>
-
     """
 
     try:
-
         resend.Emails.send({
-
-            "from":
-                "Veille Informatique <onboarding@resend.dev>",
-
-            "to":
-                [EMAIL_DESTINATAIRE],
-
-            "subject":
-                (
-                    f"Veille Informatique & Numérique "
-                    f"— {len(articles_traites)} actualités "
-                    f"— {date_jour}"
-                ),
-
-            "html":
-                html_email
+            "from": "Veille Informatique <onboarding@resend.dev>",
+            "to": [EMAIL_DESTINATAIRE],
+            "subject": (
+                f"Veille Informatique — "
+                f"{nb_actualites} actualités · {nb_cve} CVE · {date_jour}"
+            ),
+            "html": html_email,
         })
 
-        print(
-            "✓ E-mail envoyé avec succès !"
-        )
+        print("✓ E-mail envoyé avec succès.")
 
     except Exception as e:
-
-        print(
-            f"❌ Erreur envoi mail : "
-            f"{e}"
-        )
-
+        print(f"❌ Erreur envoi mail : {e}")
 else:
-
     print(
-        "\nℹ️ E-mail non envoyé : "
-        "RESEND_API_KEY ou "
-        "EMAIL_DESTINATAIRE absent."
+        "ℹ️ E-mail non envoyé : "
+        "RESEND_API_KEY ou EMAIL_DESTINATAIRE absent."
     )
 
 
-# ============================================================
-# FIN
-# ============================================================
-
-print("")
-print("======================================")
+print("\n======================================")
 print("VEILLE TERMINÉE")
 print("======================================")
-print(
-    f"Période : "
-    f"{PERIODE_VEILLE_JOURS} jours"
-)
-print(
-    f"Articles : "
-    f"{len(articles_traites)}"
-)
-print("======================================")
-```
