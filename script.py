@@ -3,8 +3,9 @@ import os
 import json
 import re
 import urllib.request
+import urllib.parse
 import feedparser
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import resend
 
 
@@ -20,16 +21,35 @@ if RESEND_API_KEY:
 
 
 # ============================================================
-# SOURCES DE VEILLE INFORMATIQUE
+# PARAMÈTRES DE VEILLE
 # ============================================================
+
+# Nombre de jours d'historique
+PERIODE_VEILLE_JOURS = 21
+
+# Nombre maximum d'articles récupérés par flux RSS
+MAX_ARTICLES_PAR_SOURCE = 50
+
+# Nombre maximum de CVE récupérées depuis le NVD
+MAX_CVE = 100
+
+# Nombre maximum d'articles conservés dans data.json
+MAX_ARTICLES_TOTAL = 300
+
+# API NVD
+NVD_API_URL = (
+    "https://services.nvd.nist.gov/rest/json/cves/2.0"
+)
+
+# Clé API NVD optionnelle
 #
-# IMPORTANT :
-# Les sources sont séparées par domaine afin que le dashboard
-# puisse filtrer correctement les actualités.
-#
-# Les flux institutionnels sont privilégiés pour la
-# cybersécurité et les sujets réglementaires.
-#
+# Si NVD_API_KEY est configurée dans les variables
+# d'environnement, elle sera automatiquement utilisée.
+NVD_API_KEY = os.environ.get("NVD_API_KEY")
+
+
+# ============================================================
+# SOURCES DE VEILLE INFORMATIQUE
 # ============================================================
 
 RSS_FEEDS = [
@@ -62,6 +82,7 @@ RSS_FEEDS = [
         "categorie": "Cybersécurité"
     },
 
+
     # --------------------------------------------------------
     # NIST
     # --------------------------------------------------------
@@ -71,6 +92,7 @@ RSS_FEEDS = [
         "url": "https://www.nist.gov/news-events/cybersecurity/rss.xml",
         "categorie": "Cybersécurité"
     },
+
 
     # --------------------------------------------------------
     # IA / INTELLIGENCE ARTIFICIELLE
@@ -94,6 +116,7 @@ RSS_FEEDS = [
         "categorie": "Intelligence artificielle"
     },
 
+
     # --------------------------------------------------------
     # CLOUD / INFRASTRUCTURE
     # --------------------------------------------------------
@@ -116,6 +139,7 @@ RSS_FEEDS = [
         "categorie": "Cloud & Infrastructure"
     },
 
+
     # --------------------------------------------------------
     # OPEN SOURCE / DÉVELOPPEMENT
     # --------------------------------------------------------
@@ -132,6 +156,7 @@ RSS_FEEDS = [
         "categorie": "Web & Technologies"
     },
 
+
     # --------------------------------------------------------
     # DATA
     # --------------------------------------------------------
@@ -141,6 +166,7 @@ RSS_FEEDS = [
         "url": "https://cloud.google.com/feeds/blog.xml",
         "categorie": "Data"
     },
+
 
     # --------------------------------------------------------
     # WEB / TECHNOLOGIES
@@ -152,11 +178,12 @@ RSS_FEEDS = [
         "categorie": "Web & Technologies"
     },
 
-     {
+    {
         "source": "DMC Technologies",
         "url": "https://dmc-technologies.fr/feed/",
         "categorie": "Web & Technologies"
     },
+
 
     # --------------------------------------------------------
     # TRANSFORMATION NUMÉRIQUE
@@ -182,42 +209,24 @@ def nettoyer_html(texte):
     if not texte:
         return "Consulter la source pour plus de détails."
 
-    clean = re.sub(r'<[^>]+>', '', texte)
+    clean = re.sub(
+        r"<[^>]+>",
+        "",
+        str(texte)
+    )
 
     clean = re.sub(
-        r'&nbsp;|&amp;|&quot;|&#39;',
-        ' ',
+        r"&nbsp;|&amp;|&quot;|&#39;",
+        " ",
         clean
     )
 
-    clean = ' '.join(clean.split())
+    clean = " ".join(clean.split())
 
     if len(clean) > 300:
         clean = clean[:300] + "..."
 
     return clean
-
-
-def format_date(entry):
-    """
-    Récupère la date publiée dans le flux.
-    """
-
-    published = (
-        entry.get("published_parsed")
-        or entry.get("updated_parsed")
-        or entry.get("created_parsed")
-    )
-
-    if published:
-
-        return (
-            f"{published.tm_mday:02d}/"
-            f"{published.tm_mon:02d}/"
-            f"{published.tm_year}"
-        )
-
-    return datetime.now().strftime("%d/%m/%Y")
 
 
 def nettoyer_titre(titre):
@@ -228,20 +237,99 @@ def nettoyer_titre(titre):
     if not titre:
         return "Actualité informatique"
 
-    return ' '.join(str(titre).split())
+    return " ".join(
+        str(titre).split()
+    )
+
+
+def obtenir_date_entry(entry):
+    """
+    Récupère la date d'une entrée RSS.
+    """
+
+    published = (
+        entry.get("published_parsed")
+        or entry.get("updated_parsed")
+        or entry.get("created_parsed")
+    )
+
+    if published:
+
+        try:
+
+            return datetime(
+                published.tm_year,
+                published.tm_mon,
+                published.tm_mday,
+                published.tm_hour,
+                published.tm_min,
+                published.tm_sec
+            )
+
+        except Exception:
+            pass
+
+    return None
+
+
+def format_date_datetime(date_obj):
+    """
+    Transforme un datetime en DD/MM/YYYY.
+    """
+
+    if date_obj:
+
+        return date_obj.strftime(
+            "%d/%m/%Y"
+        )
+
+    return datetime.now().strftime(
+        "%d/%m/%Y"
+    )
+
+
+def convertir_date(date_string):
+    """
+    Transforme DD/MM/YYYY en datetime
+    pour permettre le tri.
+    """
+
+    try:
+
+        return datetime.strptime(
+            date_string,
+            "%d/%m/%Y"
+        )
+
+    except Exception:
+
+        return datetime.min
 
 
 # ============================================================
-# COLLECTE
+# COLLECTE RSS
 # ============================================================
 
 articles_traites = []
 
+date_limite = (
+    datetime.now()
+    - timedelta(
+        days=PERIODE_VEILLE_JOURS
+    )
+)
+
+
 headers = {
     "User-Agent":
-        "AirDigitalVision-Veille/1.0 "
-        "(+https://air-digital-vision-xua.caffeine.xyz/)"
+        "Veille-Informatique/2.0"
 }
+
+
+print("")
+print("======================================")
+print("COLLECTE DES FLUX RSS")
+print("======================================")
 
 
 for feed_info in RSS_FEEDS:
@@ -260,26 +348,43 @@ for feed_info in RSS_FEEDS:
 
         with urllib.request.urlopen(
             req,
-            timeout=15
+            timeout=20
         ) as response:
 
             xml_data = response.read()
 
-            feed = feedparser.parse(xml_data)
-
+        feed = feedparser.parse(
+            xml_data
+        )
 
         if feed.bozo:
 
             print(
-                f"⚠️ Flux potentiellement invalide : "
+                f"⚠️ Flux potentiellement "
+                f"invalide : "
                 f"{feed_info['source']}"
             )
 
-
         compteur = 0
 
+        for entry in feed.entries[
+            :MAX_ARTICLES_PAR_SOURCE
+        ]:
 
-        for entry in feed.entries[:5]:
+            date_entry = obtenir_date_entry(
+                entry
+            )
+
+            # ------------------------------------------------
+            # FILTRE 21 JOURS
+            # ------------------------------------------------
+
+            if (
+                date_entry
+                and date_entry < date_limite
+            ):
+
+                continue
 
             titre = nettoyer_titre(
                 entry.get(
@@ -301,8 +406,9 @@ for feed_info in RSS_FEEDS:
                 )
             )
 
-            date_pub = format_date(entry)
-
+            date_pub = format_date_datetime(
+                date_entry
+            )
 
             article = {
 
@@ -322,51 +428,458 @@ for feed_info in RSS_FEEDS:
                     date_pub,
 
                 "resume":
-                    nettoyer_html(raw_desc),
+                    nettoyer_html(
+                        raw_desc
+                    ),
 
                 "impact_pratique":
                     (
-                        f"Actualité du {date_pub} — "
-                        f"Veille {feed_info['categorie']}."
+                        f"Actualité du "
+                        f"{date_pub} — "
+                        f"Veille "
+                        f"{feed_info['categorie']}."
                     )
             }
 
-
-            articles_traites.append(article)
+            articles_traites.append(
+                article
+            )
 
             compteur += 1
 
-
         print(
-            f"✓ {compteur} article(s) récupéré(s)"
+            f"✓ {compteur} article(s) "
+            f"récupéré(s)"
         )
-
 
     except Exception as e:
 
         print(
             f"❌ Erreur avec "
-            f"{feed_info['source']} : {e}"
+            f"{feed_info['source']} : "
+            f"{e}"
         )
+
+
+# ============================================================
+# COLLECTE CVE / NVD
+# ============================================================
+
+def collecter_cve_nvd():
+
+    print("")
+    print("======================================")
+    print("COLLECTE DES CVE / NVD")
+    print("======================================")
+
+    try:
+
+        maintenant = datetime.now(
+            timezone.utc
+        )
+
+        debut = (
+            maintenant
+            - timedelta(
+                days=PERIODE_VEILLE_JOURS
+            )
+        )
+
+        params = {
+
+            "pubStartDate":
+                debut.strftime(
+                    "%Y-%m-%dT%H:%M:%S.000"
+                ),
+
+            "pubEndDate":
+                maintenant.strftime(
+                    "%Y-%m-%dT%H:%M:%S.000"
+                ),
+
+            "resultsPerPage":
+                MAX_CVE
+        }
+
+        url = (
+            NVD_API_URL
+            + "?"
+            + urllib.parse.urlencode(
+                params
+            )
+        )
+
+        cve_headers = {
+
+            "User-Agent":
+                "Veille-Informatique/2.0"
+        }
+
+        if NVD_API_KEY:
+
+            cve_headers[
+                "apiKey"
+            ] = NVD_API_KEY
+
+        req = urllib.request.Request(
+            url,
+            headers=cve_headers
+        )
+
+        with urllib.request.urlopen(
+            req,
+            timeout=30
+        ) as response:
+
+            data = json.loads(
+                response.read().decode(
+                    "utf-8"
+                )
+            )
+
+        vulnerabilities = data.get(
+            "vulnerabilities",
+            []
+        )
+
+        print(
+            f"✓ {len(vulnerabilities)} "
+            f"CVE reçues du NVD"
+        )
+
+        compteur = 0
+
+        for item in vulnerabilities:
+
+            cve = item.get(
+                "cve",
+                {}
+            )
+
+            cve_id = cve.get(
+                "id",
+                ""
+            )
+
+            if not cve_id.startswith(
+                "CVE-"
+            ):
+
+                continue
+
+            # ------------------------------------------------
+            # DESCRIPTION
+            # ------------------------------------------------
+
+            descriptions = cve.get(
+                "descriptions",
+                []
+            )
+
+            description = ""
+
+            # Priorité à l'anglais
+            for desc in descriptions:
+
+                if (
+                    desc.get("lang")
+                    == "en"
+                ):
+
+                    description = desc.get(
+                        "value",
+                        ""
+                    )
+
+                    break
+
+            if (
+                not description
+                and descriptions
+            ):
+
+                description = (
+                    descriptions[0]
+                    .get(
+                        "value",
+                        ""
+                    )
+                )
+
+            # ------------------------------------------------
+            # DATE
+            # ------------------------------------------------
+
+            published = cve.get(
+                "published"
+            )
+
+            date_cve = datetime.now()
+
+            if published:
+
+                try:
+
+                    date_cve = (
+                        datetime.fromisoformat(
+                            published.replace(
+                                "Z",
+                                "+00:00"
+                            )
+                        )
+                        .replace(
+                            tzinfo=None
+                        )
+                    )
+
+                except Exception:
+                    pass
+
+            # ------------------------------------------------
+            # CVSS
+            # ------------------------------------------------
+
+            score = None
+            severity = None
+            version_cvss = None
+
+            metrics = cve.get(
+                "metrics",
+                {}
+            )
+
+            # ------------------------------------------------
+            # CVSS V4
+            # ------------------------------------------------
+
+            if metrics.get(
+                "cvssMetricV40"
+            ):
+
+                metric = metrics[
+                    "cvssMetricV40"
+                ][0]
+
+                cvss_data = metric.get(
+                    "cvssData",
+                    {}
+                )
+
+                score = cvss_data.get(
+                    "baseScore"
+                )
+
+                severity = cvss_data.get(
+                    "baseSeverity"
+                )
+
+                version_cvss = "4.0"
+
+            # ------------------------------------------------
+            # CVSS V3.1
+            # ------------------------------------------------
+
+            elif metrics.get(
+                "cvssMetricV31"
+            ):
+
+                metric = metrics[
+                    "cvssMetricV31"
+                ][0]
+
+                cvss_data = metric.get(
+                    "cvssData",
+                    {}
+                )
+
+                score = cvss_data.get(
+                    "baseScore"
+                )
+
+                severity = cvss_data.get(
+                    "baseSeverity"
+                )
+
+                version_cvss = "3.1"
+
+            # ------------------------------------------------
+            # CVSS V3.0
+            # ------------------------------------------------
+
+            elif metrics.get(
+                "cvssMetricV30"
+            ):
+
+                metric = metrics[
+                    "cvssMetricV30"
+                ][0]
+
+                cvss_data = metric.get(
+                    "cvssData",
+                    {}
+                )
+
+                score = cvss_data.get(
+                    "baseScore"
+                )
+
+                severity = cvss_data.get(
+                    "baseSeverity"
+                )
+
+                version_cvss = "3.0"
+
+            # ------------------------------------------------
+            # RÉSUMÉ
+            # ------------------------------------------------
+
+            resume = nettoyer_html(
+                description
+            )
+
+            # ------------------------------------------------
+            # IMPACT
+            # ------------------------------------------------
+
+            if score is not None:
+
+                impact = (
+                    f"CVE {cve_id} — "
+                    f"CVSS {score}"
+                )
+
+                if version_cvss:
+
+                    impact += (
+                        f" — CVSS "
+                        f"{version_cvss}"
+                    )
+
+                if severity:
+
+                    impact += (
+                        f" — {severity}"
+                    )
+
+            else:
+
+                impact = (
+                    f"CVE {cve_id} "
+                    f"publiée récemment."
+                )
+
+            # ------------------------------------------------
+            # ARTICLE
+            # ------------------------------------------------
+
+            article = {
+
+                "source":
+                    "NVD / NIST",
+
+                "titre":
+                    (
+                        f"{cve_id} — "
+                        f"Vulnérabilité "
+                        f"de sécurité"
+                    ),
+
+                "lien":
+                    (
+                        "https://nvd.nist.gov/"
+                        f"vuln/detail/{cve_id}"
+                    ),
+
+                "categorie":
+                    "Vulnérabilités",
+
+                "date":
+                    date_cve.strftime(
+                        "%d/%m/%Y"
+                    ),
+
+                "resume":
+                    resume,
+
+                "impact_pratique":
+                    impact,
+
+                "cve":
+                    cve_id,
+
+                "cvss":
+                    score,
+
+                "severity":
+                    severity,
+
+                "cvss_version":
+                    version_cvss
+            }
+
+            articles_traites.append(
+                article
+            )
+
+            compteur += 1
+
+        print(
+            f"✓ {compteur} CVE "
+            f"ajoutées à la veille"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Erreur NVD/CVE : "
+            f"{e}"
+        )
+
+
+collecter_cve_nvd()
 
 
 # ============================================================
 # SUPPRESSION DES DOUBLONS
 # ============================================================
 
+print("")
+print("======================================")
+print("SUPPRESSION DES DOUBLONS")
+print("======================================")
+
+
 articles_uniques = {}
+
 
 for article in articles_traites:
 
-    cle = (
-        article["titre"].strip().lower()
-        + "|"
-        + article["source"].strip().lower()
-    )
+    # Pour les CVE, l'identifiant CVE
+    # est utilisé comme clé principale.
+    if article.get("cve"):
+
+        cle = (
+            "cve|"
+            + article["cve"].lower()
+        )
+
+    else:
+
+        cle = (
+            article["titre"]
+            .strip()
+            .lower()
+            + "|"
+            + article["source"]
+            .strip()
+            .lower()
+        )
 
     if cle not in articles_uniques:
 
-        articles_uniques[cle] = article
+        articles_uniques[
+            cle
+        ] = article
 
 
 articles_traites = list(
@@ -374,197 +887,72 @@ articles_traites = list(
 )
 
 
+print(
+    f"✓ {len(articles_traites)} "
+    f"articles uniques"
+)
+
+
 # ============================================================
 # TRI PAR DATE
 # ============================================================
 
-def convertir_date(date_string):
-
-    try:
-
-        return datetime.strptime(
-            date_string,
-            "%d/%m/%Y"
-        )
-
-    except:
-
-        return datetime.min
-
-
 articles_traites.sort(
     key=lambda x:
-        convertir_date(x["date"]),
+        convertir_date(
+            x["date"]
+        ),
     reverse=True
 )
-
-
-# ============================================================
-# FALLBACK
-# ============================================================
-#
-# Si une source ne répond pas, on conserve une présence
-# minimale de certaines catégories.
-#
-# Cela évite que le dashboard paraisse vide.
-#
-# ============================================================
-
-categories_presentes = {
-    article["categorie"]
-    for article in articles_traites
-}
-
-
-date_jour = datetime.now().strftime(
-    "%d/%m/%Y"
-)
-
-
-fallbacks = {
-
-    "Cybersécurité": {
-
-        "source": "CERT-FR / ANSSI",
-
-        "titre":
-            "Veille cybersécurité et alertes de sécurité",
-
-        "lien":
-            "https://www.cert.ssi.gouv.fr/",
-
-        "categorie":
-            "Cybersécurité",
-
-        "resume":
-            "Consultez les dernières alertes, avis de sécurité, rapports de menace et recommandations publiés par le CERT-FR.",
-
-        "impact_pratique":
-            "Surveillez régulièrement les vulnérabilités et recommandations de sécurité applicables à votre environnement informatique."
-    },
-
-
-    "Intelligence artificielle": {
-
-        "source": "Air Digital Vision",
-
-        "titre":
-            "Veille Intelligence Artificielle",
-
-        "lien":
-            "https://air-digital-vision-xua.caffeine.xyz/",
-
-        "categorie":
-            "Intelligence artificielle",
-
-        "resume":
-            "Suivez les évolutions des modèles d'IA, des outils génératifs, des agents IA et des usages professionnels.",
-
-        "impact_pratique":
-            "Identifier les évolutions de l'IA pouvant avoir un impact sur les usages numériques et les processus des organisations."
-    },
-
-
-    "Cloud & Infrastructure": {
-
-        "source": "Air Digital Vision",
-
-        "titre":
-            "Veille Cloud & Infrastructure",
-
-        "lien":
-            "https://air-digital-vision-xua.caffeine.xyz/",
-
-        "categorie":
-            "Cloud & Infrastructure",
-
-        "resume":
-            "Suivez les évolutions du cloud, des infrastructures, des conteneurs et des technologies DevOps.",
-
-        "impact_pratique":
-            "Identifier les évolutions technologiques pouvant améliorer ou modifier les infrastructures numériques."
-    },
-
-
-    "Open Source & Développement": {
-
-        "source": "GitHub",
-
-        "titre":
-            "Veille Open Source & Développement",
-
-        "lien":
-            "https://github.com/",
-
-        "categorie":
-            "Open Source & Développement",
-
-        "resume":
-            "Actualités autour du développement logiciel, de l'open source et des outils destinés aux développeurs.",
-
-        "impact_pratique":
-            "Identifier les nouveaux outils, frameworks et projets open source utiles aux projets numériques."
-    }
-}
-
-
-for categorie, fallback in fallbacks.items():
-
-    if categorie not in categories_presentes:
-
-        article = fallback.copy()
-
-        article["date"] = date_jour
-
-        articles_traites.append(article)
 
 
 # ============================================================
 # LIMITATION
 # ============================================================
 
-# Évite d'avoir un data.json gigantesque.
-# À adapter selon tes besoins.
-
-articles_traites = articles_traites[:100]
+articles_traites = articles_traites[
+    :MAX_ARTICLES_TOTAL
+]
 
 
 # ============================================================
 # STATISTIQUES
 # ============================================================
 
-print(
-    "\n======================================"
-)
+print("")
+print("======================================")
+print("VEILLE INFORMATIQUE")
+print("======================================")
+
 
 print(
-    "VEILLE INFORMATIQUE"
-)
-
-print(
-    "======================================"
-)
-
-print(
-    f"Total : {len(articles_traites)}"
+    f"Total : "
+    f"{len(articles_traites)}"
 )
 
 
 categories = {}
 
+
 for article in articles_traites:
 
-    categorie = article["categorie"]
+    categorie = article[
+        "categorie"
+    ]
 
     categories[categorie] = (
-        categories.get(categorie, 0) + 1
+        categories.get(
+            categorie,
+            0
+        ) + 1
     )
 
 
 for categorie, nombre in categories.items():
 
     print(
-        f"  - {categorie} : {nombre}"
+        f"  - {categorie} : "
+        f"{nombre}"
     )
 
 
@@ -586,14 +974,20 @@ with open(
     )
 
 
+print("")
 print(
-    "\n✓ data.json généré avec succès."
+    "✓ data.json généré avec succès."
 )
 
 
 # ============================================================
 # EMAIL
 # ============================================================
+
+date_jour = datetime.now().strftime(
+    "%d/%m/%Y"
+)
+
 
 if (
     articles_traites
@@ -638,8 +1032,8 @@ if (
                 font-size:13px;
                 margin:0;
             ">
-                IA · Cybersécurité · Cloud · Data ·
-                Open Source · Web · Technologies
+                IA · Cybersécurité · CVE · Cloud ·
+                Data · Open Source · Web · Technologies
             </p>
 
         </div>
@@ -651,6 +1045,7 @@ if (
         ">
 
             Édition du
+
             <strong>
                 {date_jour}
             </strong>
@@ -660,14 +1055,70 @@ if (
             <strong>
                 {len(articles_traites)}
             </strong>
+
             actualités
+
+            ·
+
+            <strong>
+                {PERIODE_VEILLE_JOURS}
+            </strong>
+
+            jours d'historique
 
         </div>
 
     """
 
-
     for art in articles_traites:
+
+        # ----------------------------------------------------
+        # Informations CVE
+        # ----------------------------------------------------
+
+        cve_badge = ""
+
+        if art.get("cve"):
+
+            severity = (
+                art.get("severity")
+                or ""
+            )
+
+            score = art.get(
+                "cvss"
+            )
+
+            cvss_text = ""
+
+            if score is not None:
+
+                cvss_text = (
+                    f" · CVSS {score}"
+                )
+
+            cve_badge = f"""
+
+            <div style="
+                margin-top:8px;
+                padding:7px 9px;
+                background:#fff7ed;
+                border-left:3px solid #f97316;
+                font-size:12px;
+                color:#9a3412;
+            ">
+
+                <strong>
+                    {art.get("cve")}
+                </strong>
+
+                {cvss_text}
+
+                {f" · {severity}" if severity else ""}
+
+            </div>
+
+            """
 
         html_email += f"""
 
@@ -700,7 +1151,6 @@ if (
 
             </div>
 
-
             <h2 style="
                 font-size:17px;
                 margin:5px 0 8px;
@@ -720,6 +1170,7 @@ if (
 
             </h2>
 
+            {cve_badge}
 
             <p style="
                 color:#475569;
@@ -730,7 +1181,6 @@ if (
                 {art['resume']}
 
             </p>
-
 
             <div style="
                 background:#ffffff;
@@ -747,7 +1197,6 @@ if (
                 {art['impact_pratique']}
 
             </div>
-
 
             <p style="
                 margin-top:12px;
@@ -772,7 +1221,6 @@ if (
 
         """
 
-
     html_email += """
 
         <div style="
@@ -785,9 +1233,20 @@ if (
         ">
 
             Veille automatisée par
+
             <strong>
                 Air Digital Vision
             </strong>
+
+            <br>
+
+            Période analysée :
+            21 derniers jours
+
+            <br>
+
+            Les informations proviennent
+            des sources originales.
 
             <br>
 
@@ -799,7 +1258,6 @@ if (
     </div>
 
     """
-
 
     try:
 
@@ -822,18 +1280,16 @@ if (
                 html_email
         })
 
-
         print(
             "✓ E-mail envoyé avec succès !"
         )
 
-
     except Exception as e:
 
         print(
-            f"❌ Erreur envoi mail : {e}"
+            f"❌ Erreur envoi mail : "
+            f"{e}"
         )
-
 
 else:
 
@@ -842,4 +1298,23 @@ else:
         "RESEND_API_KEY ou "
         "EMAIL_DESTINATAIRE absent."
     )
+
+
+# ============================================================
+# FIN
+# ============================================================
+
+print("")
+print("======================================")
+print("VEILLE TERMINÉE")
+print("======================================")
+print(
+    f"Période : "
+    f"{PERIODE_VEILLE_JOURS} jours"
+)
+print(
+    f"Articles : "
+    f"{len(articles_traites)}"
+)
+print("======================================")
 ```
