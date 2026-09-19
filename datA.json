@@ -1,0 +1,74 @@
+[
+  {
+    "source": "CERT-FR",
+    "titre": "Alertes et avis de sécurité informatique",
+    "lien": "https://www.cert.ssi.gouv.fr/",
+    "categorie": "Cybersécurité",
+    "date": "18/09/2026",
+    "resume": "Actualités, alertes et avis concernant les vulnérabilités, menaces et incidents de sécurité affectant les systèmes d'information.",
+    "impact_pratique": "Surveiller les vulnérabilités et appliquer rapidement les mesures de sécurité recommandées."
+  },
+  {
+    "source": "NIST",
+    "titre": "Actualités et publications en cybersécurité",
+    "lien": "https://www.nist.gov/cybersecurity",
+    "categorie": "Cybersécurité",
+    "date": "18/09/2026",
+    "resume": "Publications, recommandations et travaux du NIST concernant la cybersécurité, les technologies de l'information et la gestion des risques.",
+    "impact_pratique": "Identifier les nouvelles pratiques, standards et recommandations utiles à la sécurité des systèmes d'information."
+  },
+  {
+    "source": "ENISA",
+    "titre": "Actualités européennes de cybersécurité",
+    "lien": "https://www.enisa.europa.eu/",
+    "categorie": "Cybersécurité",
+    "date": "18/09/2026",
+    "resume": "Actualités, rapports et recommandations de l'Agence de l'Union européenne pour la cybersécurité.",
+    "impact_pratique": "Suivre les évolutions européennes en matière de cybersécurité, de résilience numérique et de réglementation."
+  },
+  {
+    "source": "NIST",
+    "titre": "Technologies de l'information et standards",
+    "lien": "https://www.nist.gov/information-technology",
+    "categorie": "Cloud & Infrastructure",
+    "date": "18/09/2026",
+    "resume": "Travaux et publications consacrés aux technologies de l'information, aux infrastructures numériques et aux standards techniques.",
+    "impact_pratique": "Identifier les évolutions technologiques et standards pouvant influencer les infrastructures informatiques."
+  },
+  {
+    "source": "Air Digital Vision",
+    "titre": "Veille Intelligence Artificielle",
+    "lien": "https://airdigitalvision.com/",
+    "categorie": "Intelligence artificielle",
+    "date": "18/09/2026",
+    "resume": "Suivi des évolutions de l'intelligence artificielle, des modèles génératifs, des agents IA et des usages professionnels.",
+    "impact_pratique": "Identifier les nouveaux outils et usages de l'IA pouvant améliorer les processus, la productivité et la transformation numérique."
+  },
+  {
+    "source": "Air Digital Vision",
+    "titre": "Veille Transformation numérique",
+    "lien": "https://airdigitalvision.com/",
+    "categorie": "Transformation numérique",
+    "date": "18/09/2026",
+    "resume": "Suivi des innovations et pratiques permettant aux organisations de digitaliser leurs processus et leurs activités.",
+    "impact_pratique": "Repérer les solutions numériques pouvant contribuer à l'automatisation et à l'amélioration des processus."
+  },
+  {
+    "source": "Air Digital Vision",
+    "titre": "Veille Data et gestion de l'information",
+    "lien": "https://airdigitalvision.com/",
+    "categorie": "Data",
+    "date": "18/09/2026",
+    "resume": "Actualités liées à la gestion des données, aux bases de données, à l'analyse, à l'automatisation et aux architectures data.",
+    "impact_pratique": "Identifier les technologies permettant de mieux collecter, organiser, exploiter et sécuriser les données."
+  },
+  {
+    "source": "Air Digital Vision",
+    "titre": "Veille Blockchain et Web3",
+    "lien": "https://airdigitalvision.com/",
+    "categorie": "Blockchain & Web3",
+    "date": "18/09/2026",
+    "resume": "Suivi des évolutions de la blockchain, des actifs numériques, des applications décentralisées et des technologies Web3.",
+    "impact_pratique": "Identifier les nouveaux usages de la blockchain et leurs applications potentielles pour les organisations."
+  }
+]
