@@ -152,6 +152,12 @@ RSS_FEEDS = [
         "categorie": "Web & Technologies"
     },
 
+     {
+        "source": "DMC Technologies",
+        "url": "https://dmc-technologies.fr/feed/",
+        "categorie": "Web & Technologies"
+    },
+
     # --------------------------------------------------------
     # TRANSFORMATION NUMÉRIQUE
     # --------------------------------------------------------
@@ -234,7 +240,7 @@ articles_traites = []
 headers = {
     "User-Agent":
         "AirDigitalVision-Veille/1.0 "
-        "(+https://airdigitalvision.fr)"
+        "(+https://air-digital-vision-xua.caffeine.xyz/)"
 }
 
 
@@ -446,7 +452,7 @@ fallbacks = {
             "Veille Intelligence Artificielle",
 
         "lien":
-            "https://airdigitalvision.fr/",
+            "https://air-digital-vision-xua.caffeine.xyz/",
 
         "categorie":
             "Intelligence artificielle",
@@ -467,7 +473,7 @@ fallbacks = {
             "Veille Cloud & Infrastructure",
 
         "lien":
-            "https://airdigitalvision.fr/",
+            "https://air-digital-vision-xua.caffeine.xyz/",
 
         "categorie":
             "Cloud & Infrastructure",
